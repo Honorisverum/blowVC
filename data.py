@@ -4,28 +4,25 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torch.distributions import beta
 from sklearn.utils import shuffle
 from torch.utils.data import Dataset
 
 EXTENSION = '.pt'
 
 
-class DataSet(Dataset):
-
-    def __init__(self, path_in, lchunk, stride, split='train', trim=None,
-                 split_utterances=True,
-                 frame_energy_thres=0, temp_jitter=False,
-                 select_speaker=None, select_file=None, seed=0, verbose=True,
-                 store_in_ram=True, sampling_rate=16000):
+class DatasetVC(Dataset):
+    def __init__(self, path_in, lchunk, stride, split='train', frame_energy_thres=0,
+                 temp_jitter=False, seed=0, sampling_rate=16000, is_aug=False):
+        assert split in ['train', 'valid']
         self.path_in = path_in
         self.lchunk = lchunk
         self.stride = stride
         self.temp_jitter = temp_jitter
-        self.store_in_ram = store_in_ram
-        trim = np.inf
-
         self.filenames = sorted(glob.glob(f'{path_in}/**/*.pt'))
         self.filenames = shuffle(self.filenames, random_state=seed)
+        self.is_aug = is_aug
+        self.augmentations = DataAugmentation()
 
         # Get speakers & utterances
         self.speakers, self.utterances = {}, defaultdict(dict)
@@ -43,12 +40,11 @@ class DataSet(Dataset):
             lutterances.sort()
             lutterances = shuffle(lutterances, random_state=seed)
             isplit_ut = int(len(lutterances) * 0.1)
-
             if split == 'train':
                 ut_del = lutterances[-isplit_ut:]
+                for ut in ut_del: del self.utterances[spk][ut]
             elif split == 'valid':
                 ut_del = lutterances[:-isplit_ut]
-            if split_utterances:
                 for ut in ut_del: del self.utterances[spk][ut]
 
         # Filter filenames by speaker and utterance
@@ -64,16 +60,13 @@ class DataSet(Dataset):
         self.indices = []
         duration = {}
         for i, filename in enumerate(self.filenames):
-            if verbose:
-                print('\rRead audio {:5.1f}%'.format(100 * (i + 1) / len(self.filenames)), end='')
+            print('\rRead audio {:5.1f}%'.format(100 * (i + 1) / len(self.filenames)), end='')
             # Info
             spk, ut = self.filename_split(filename)
             ispk, iut = self.speakers[spk], self.utterances[spk][ut]
             # Load
             if spk not in duration:
                 duration[spk] = 0
-            if duration[spk] >= trim:
-                continue
             x = torch.load(filename)
             self.audios[i] = x.clone()
             x = x.float()
@@ -87,12 +80,9 @@ class DataSet(Dataset):
                     info = [i, j, 0, ispk, iut]
                     self.indices.append(torch.LongTensor(info))
                 duration[spk] += stride / sampling_rate
-                if duration[spk] >= trim:
-                    break
             self.indices[-1][2] = 1
         self.indices = torch.stack(self.indices)
 
-        # Print
         print(f' Loaded {split}: {len(self.speakers)} spk, '
               f'{len(self.filenames)} ut, {len(self.indices)} frames')
 
@@ -122,19 +112,18 @@ class DataSet(Dataset):
             x = tmp[j:j + self.lchunk].float()
         # Get info
         y = torch.LongTensor([i, j, last, ispk, ichap])
+        if self.is_aug:
+            x = self.augmentations.emphasis(x, 0.2)
+            x = self.augmentations.magnorm_flip(x, 1)
         return x, y
 
 
 class DataAugmentation(object):
+    def __init__(self, betaparam=0.2):
+        self.betadist = beta.Beta(betaparam, betaparam)
 
-    def __init__(self, device, betaparam=0.2):
-        self.device = device
-        self.betadist = torch.distributions.beta.Beta(betaparam, betaparam)
-        return
-
-    def _get_random_vector(self, size):
-        if self.device != torch.device('cpu'):
-            return torch.cuda.FloatTensor(size, 1).uniform_()
+    @staticmethod
+    def _get_random_vector(size):
         return torch.rand(size, 1)
 
     def magnorm(self, x, val):
@@ -156,23 +145,21 @@ class DataAugmentation(object):
         return x + val * self._get_random_vector(len(x)) * torch.randn_like(x)
 
     def emphasis(self, x, val):
-        # http://www.fon.hum.uva.nl/praat/manual/Sound__Filter__de-emphasis____.html
-        # (unrolled and truncated version; performs normalization but might be better to re-normalize afterwards)
         alpha = val * (2 * self._get_random_vector(len(x)) - 1)
         sign = alpha.sign()
         alpha = alpha.abs()
-        xorig = x.clone();
+        xorig = x.clone()
         mx = torch.ones_like(alpha)
-        x[:, 1:] += sign * alpha * xorig[:, :-1];
-        mx += alpha;
+        x[:, 1:] += sign * alpha * xorig[:, :-1]
+        mx += alpha
         alpha *= alpha
-        x[:, 2:] += sign * alpha * xorig[:, :-2];
-        mx += alpha;
+        x[:, 2:] += sign * alpha * xorig[:, :-2]
+        mx += alpha
         alpha *= alpha
-        x[:, 3:] += sign * alpha * xorig[:, :-3];
-        mx += alpha;
+        x[:, 3:] += sign * alpha * xorig[:, :-3]
+        mx += alpha
         alpha *= alpha
-        x[:, 4:] += sign * alpha * xorig[:, :-4];
+        x[:, 4:] += sign * alpha * xorig[:, :-4]
         mx += alpha  # ; alpha*=alpha
         return x / mx
 

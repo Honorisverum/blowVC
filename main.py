@@ -3,39 +3,14 @@ import warnings
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
+from torch.backends import cudnn
 
-from data import DataSet, DataAugmentation
+from loop import loop
+from data import DatasetVC
 from model import Model
 
 warnings.filterwarnings('ignore')
 HALFLOGTWOPI = 0.5 * np.log(2 * np.pi).item()
-
-
-def gaussian_log_p(x, mu=None, log_sigma=None):
-    if mu is None or log_sigma is None:
-        return -HALFLOGTWOPI - 0.5 * (x ** 2)
-    return -HALFLOGTWOPI - log_sigma - 0.5 * ((x - mu) ** 2) / torch.exp(2 * log_sigma)
-
-
-def loss_flow_nll(z, log_det):
-    # size of: z = sbatch * lchunk
-    #          log_det = sbatch
-    _, size = z.size()
-
-    log_p = gaussian_log_p(z).sum(1)
-
-    nll = -log_p - log_det
-
-    log_det /= size
-    log_p /= size
-    nll /= size
-
-    log_det = log_det.mean()
-    log_p = log_p.mean()
-    nll = nll.mean()
-
-    return nll, np.array([nll.item(), log_p.item(), log_det.item()], dtype=np.float32)
 
 
 def init_seed(seed=0):
@@ -44,7 +19,7 @@ def init_seed(seed=0):
     if torch.cuda.is_available():
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        torch.cuda.manual_seed(seed)
+        torch.manual_seed(seed)
 
 
 def save_stuff(basename, model=None, epoch=None):
@@ -77,7 +52,6 @@ AUGMENT = 1
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 N_EPOCHS = 999
 LR = 1e-4
-# LR = 5e-3
 LR_TRESH = 1e-4
 LR_PATIENCE = 7
 LR_FACTOR = 0.2
@@ -86,56 +60,12 @@ BASE_FN_OUT = 'blow'
 init_seed(SEED)
 
 print('Loading data...')
-dataset_train = DataSet(PATH_DATA, LCHUNK, STRIDE, split='train', sampling_rate=SR,
-                        trim=TRIM, frame_energy_thres=FRAME_ENERGY_THRES,
-                        temp_jitter=True, seed=SEED)
-dataset_valid = DataSet(PATH_DATA, LCHUNK, STRIDE, split='valid', sampling_rate=SR,
-                        trim=TRIM, frame_energy_thres=FRAME_ENERGY_THRES,
-                        temp_jitter=False, seed=SEED)
-
+dataset_train = DatasetVC(PATH_DATA, LCHUNK, STRIDE, split='train', sampling_rate=SR,
+                          frame_energy_thres=FRAME_ENERGY_THRES, temp_jitter=True, seed=SEED, is_aug=True)
+dataset_valid = DatasetVC(PATH_DATA, LCHUNK, STRIDE, split='valid', sampling_rate=SR,
+                          frame_energy_thres=FRAME_ENERGY_THRES, temp_jitter=False, seed=SEED, is_aug=False)
 loader_train = DataLoader(dataset_train, batch_size=SBATCH, shuffle=True, drop_last=True, num_workers=NWORKERS)
 loader_valid = DataLoader(dataset_valid, batch_size=SBATCH, shuffle=False, num_workers=NWORKERS)
-batch_data_augmentation = DataAugmentation(DEVICE)
-
-
-def batch_loop(epoch, eval, loader):
-    if eval:
-        print(f'Eval epoch: {epoch}')
-        model.eval()
-    else:
-        print(f'Train epoch: {epoch}')
-        model.train()
-    cum_losses, cum_num = np.zeros(3), 0
-    LOSS_PARTS = ['nll', 'log_p', 'log_det']
-    pbar = tqdm(loader, total=len(loader), leave=False)
-    for x, info in pbar:
-        # Prepare data
-        s = info[:, 3].to(DEVICE)
-        x = x.to(DEVICE)
-        if not eval:
-            x = batch_data_augmentation.emphasis(x, 0.2)
-            x = batch_data_augmentation.magnorm_flip(x, 1)
-
-        # Forward
-        z, log_det = model.forward(x, s)
-        loss, losses = loss_flow_nll(z, log_det)
-
-        # Backward
-        if not eval:
-            optim.zero_grad()
-            loss.backward()
-            optim.step()
-
-        # Report/print
-        cum_losses += losses * len(x)
-        cum_num += len(x)
-        pbar.set_description(
-            " | ".join([f"{prt}:{val:.2f}" for prt, val in zip(LOSS_PARTS, cum_losses / cum_num)])
-        )
-
-    cum_losses /= cum_num
-    print(" | ".join([f"{prt}:{val:.2f}" for prt, val in zip(LOSS_PARTS, cum_losses)]))
-    return cum_losses[0], cum_losses
 
 
 def load_best_model(model):
@@ -150,11 +80,10 @@ def get_optimizer(lr):
 
 
 print('Init model and tools...')
-# model = Model(sqfactor=2, nblocks=2, nflows=3, ncha=256, ntargets=dataset_train.maxspeakers)
+# model = Model(sqfactor=2, nblocks=4, nflows=6, ncha=512, ntargets=dataset_train.maxspeakers)
 model = Model(sqfactor=2, nblocks=8, nflows=12, ncha=512, ntargets=dataset_train.maxspeakers)
 model.to(DEVICE)
 optim = get_optimizer(LR)
-losses = {'train': [], 'valid': []}
 loss_best = np.inf
 save_stuff(BASE_FN_OUT, model=model)
 
@@ -166,13 +95,10 @@ print('Train...')
 lr, patience, restarts = LR, LR_PATIENCE, LR_RESTARTS
 
 for epoch in range(N_EPOCHS):
-    # train loop
-    _, losses_train = batch_loop(epoch, False, loader_train)
-    losses['train'].append(losses_train)
-    # valid loop
+    # train/valid loop
+    _, model, optim = loop(model, 'train', loader_train, optim, DEVICE)
     with torch.no_grad():
-        loss, losses_valid = batch_loop(epoch, True, loader_valid)
-        losses['valid'].append(losses_valid)
+        loss, model, optim = loop(model, 'valid', loader_valid, optim, DEVICE)
     # Control stall
     if np.isnan(loss) or loss > 1000:
         patience = 0
@@ -192,6 +118,7 @@ for epoch in range(N_EPOCHS):
                 print('End...')
                 break
             lr *= LR_FACTOR
-            print(f'lr={lr:.4f}', end='')
+            print(f'lr={lr:.7f}')
             optim = get_optimizer(lr)
             patience = LR_PATIENCE
+    print()

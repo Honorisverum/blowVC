@@ -1,5 +1,7 @@
-import sys
 import torch
+from scipy import linalg
+from torch.nn import Module
+import numpy as np
 
 
 def softclamp(x, mx=1, margin=0.03, alpha=0.7, clipval=100):
@@ -20,24 +22,16 @@ def proc_problematic_samples(x, soft=True):
     return x
 
 
-class Model(torch.nn.Module):
-
+class Model(Module):
     def __init__(self, sqfactor, nblocks, nflows, ncha, ntargets, semb=128):
         super(Model, self).__init__()
-
         nsq = sqfactor
-        # print('Channels/squeeze = ',end='')
         self.blocks = torch.nn.ModuleList()
         for _ in range(nblocks):
             self.blocks.append(Block(sqfactor, nflows, nsq, ncha, semb))
-            # print('{:d}, '.format(nsq),end='')
             nsq *= sqfactor
-        # print()
         self.final_nsq = nsq // sqfactor
-
         self.embedding = torch.nn.Embedding(ntargets, semb)
-
-        return
 
     def forward(self, h, s):
         # Prepare
@@ -68,9 +62,7 @@ class Model(torch.nn.Module):
         return h
 
     def precalc_matrices(self, mode):
-        if mode != 'on' and mode != 'off':
-            print('[precalc_matrices() needs either on or off]')
-            sys.exit()
+        assert mode in ['on', 'off']
         if mode == 'off':
             for i in range(len(self.blocks)):
                 for j in range(len(self.blocks[i].flows)):
@@ -81,10 +73,7 @@ class Model(torch.nn.Module):
                 for j in range(len(self.blocks[i].flows)):
                     self.blocks[i].flows[j].mixer.weight = self.blocks[i].flows[j].mixer.calc_weight()
                     self.blocks[i].flows[j].mixer.invweight = self.blocks[i].flows[j].mixer.weight.inverse()
-        return
 
-
-########################################################################################################################
 
 class Block(torch.nn.Module):
 
@@ -117,18 +106,12 @@ class Block(torch.nn.Module):
         return h
 
 
-########################################################################################################################
-
 class Flow(torch.nn.Module):
-
     def __init__(self, nsq, ncha, semb):
         super(Flow, self).__init__()
-
         self.mixer = InvConv(nsq)
         self.norm = ActNorm(nsq)
         self.coupling = AffineCoupling(nsq, ncha, semb)
-
-        return
 
     def forward(self, h, emb):
         logdet = 0
@@ -147,13 +130,9 @@ class Flow(torch.nn.Module):
         return h
 
 
-########################################################################################################################
-########################################################################################################################
-
 class Squeezer(object):
     def __init__(self, factor=2):
         self.factor = factor
-        return
 
     def forward(self, h):
         sbatch, nsq, lchunk = h.size()
@@ -170,17 +149,9 @@ class Squeezer(object):
         return h
 
 
-########################################################################################################################
-
-from scipy import linalg
-import numpy as np
-
-
 class InvConv(torch.nn.Module):
-
     def __init__(self, in_channel):
         super(InvConv, self).__init__()
-
         weight = np.random.randn(in_channel, in_channel)
         q, _ = linalg.qr(weight)
         w_p, w_l, w_u = linalg.lu(q.astype(np.float32))
@@ -188,7 +159,6 @@ class InvConv(torch.nn.Module):
         w_u = np.triu(w_u, 1)
         u_mask = np.triu(np.ones_like(w_u), 1)
         l_mask = u_mask.T
-
         self.register_buffer('w_p', torch.from_numpy(w_p))
         self.register_buffer('u_mask', torch.from_numpy(u_mask))
         self.register_buffer('l_mask', torch.from_numpy(l_mask))
@@ -197,11 +167,8 @@ class InvConv(torch.nn.Module):
         self.w_l = torch.nn.Parameter(torch.from_numpy(w_l))
         self.w_s = torch.nn.Parameter(torch.log(1e-7 + torch.abs(torch.from_numpy(w_s))))
         self.w_u = torch.nn.Parameter(torch.from_numpy(w_u))
-
         self.weight = None
         self.invweight = None
-
-        return
 
     def calc_weight(self):
         weight = (
@@ -229,17 +196,12 @@ class InvConv(torch.nn.Module):
         return h
 
 
-########################################################################################################################
-
 class ActNorm(torch.nn.Module):
     def __init__(self, nsq, data_init=True):
         super(ActNorm, self).__init__()
         self.initialized = not data_init
-
         self.m = torch.nn.Parameter(torch.zeros(1, nsq, 1))
         self.logs = torch.nn.Parameter(torch.zeros(1, nsq, 1))
-
-        return
 
     def forward(self, h):
         # Init
@@ -258,14 +220,11 @@ class ActNorm(torch.nn.Module):
         return h * torch.exp(-self.logs) - self.m
 
 
-########################################################################################################################
-
 class AffineCoupling(torch.nn.Module):
 
     def __init__(self, nsq, ncha, semb):
         super(AffineCoupling, self).__init__()
         self.net = CouplingNet(nsq // 2, ncha, semb)
-        return
 
     def forward(self, h, emb):
         h1, h2 = torch.chunk(h, 2, dim=1)
@@ -284,7 +243,6 @@ class AffineCoupling(torch.nn.Module):
 
 
 class CouplingNet(torch.nn.Module):
-
     def __init__(self, nsq, ncha, semb, kw=3):
         super(CouplingNet, self).__init__()
         assert kw % 2 == 1
@@ -301,21 +259,10 @@ class CouplingNet(torch.nn.Module):
         )
         self.net[-1].weight.data.zero_()
         self.net[-1].bias.data.zero_()
-        return
 
     def forward(self, h, emb):
         sbatch, nsq, lchunk = h.size()
         h = h.contiguous()
-        """
-        # Slower version
-        ws=list(self.adapt_w(emb).view(sbatch,self.ncha,1,self.kw))
-        bs=list(self.adapt_b(emb))
-        hs=list(torch.chunk(h,sbatch,dim=0))
-        out=[]
-        for hi,wi,bi in zip(hs,ws,bs):
-            out.append(torch.nn.functional.conv1d(hi,wi,bias=bi,padding=self.kw//2,groups=nsq))
-        h=torch.cat(out,dim=0)
-        """
         # Faster version fully using group convolution
         w = self.adapt_w(emb).view(-1, 1, self.kw)
         b = self.adapt_b(emb).view(-1)

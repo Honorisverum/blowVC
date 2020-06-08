@@ -1,4 +1,4 @@
-import sys, argparse, os, time
+import sys, os
 import numpy as np
 import torch
 import torch.utils.data
@@ -6,16 +6,18 @@ from torch.utils.data import DataLoader
 from copy import deepcopy
 from scipy.io import wavfile
 from tqdm.auto import tqdm
+from torch.backends import cudnn
 import numba
 
-from data import DataSet
+from data import DatasetVC
 from model import Model
 
 
-def load_stuff(basename, model, device='cpu'):
+def load_model(basename):
     basename = 'weights/' + basename
-    state = torch.load(basename + '.model.pt', map_location=device)
-    model.load_state_dict(state, strict=True)
+    state = torch.load(basename + '.model.pt', map_location='cpu')
+    model = Model(**state['model_params'])
+    model.load_state_dict(state['state_dict'], strict=True)
     return model
 
 
@@ -25,7 +27,7 @@ def init_seed(seed=0):
     if torch.cuda.is_available():
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        torch.cuda.manual_seed(seed)
+        torch.manual_seed(seed)
 
 
 def synthesize(frames, filename, stride, sr=16000, deemph=0, ymax=0.98, normalize=False):
@@ -52,7 +54,6 @@ def synthesize(frames, filename, stride, sr=16000, deemph=0, ymax=0.98, normaliz
 
 @numba.jit(nopython=True, cache=True)
 def deemphasis(x, alpha=0.2):
-    # http://www.fon.hum.uva.nl/praat/manual/Sound__Filter__de-emphasis____.html
     assert 0 <= alpha <= 1
     if alpha == 0 or alpha == 1:
         return x
@@ -82,13 +83,12 @@ init_seed(SEED)
 
 
 print('Load', SPLIT, 'audio...')
-dataset = DataSet(PATH_DATA, LCHUNK, STRIDE, sampling_rate=SR, split=SPLIT, trim=TRIM, seed=SEED)
+dataset = DatasetVC(PATH_DATA, LCHUNK, STRIDE, sampling_rate=SR, split=SPLIT, trim=TRIM, seed=SEED)
 loader = DataLoader(dataset, batch_size=SBATCH, shuffle=False, num_workers=0)
 speakers = deepcopy(dataset.speakers)
 
 print('Load model...')
-model = Model(sqfactor=2, nblocks=8, nflows=12, ncha=512, ntargets=dataset.maxspeakers)
-model = load_stuff(BASE_FN_MODEL, model)
+model = load_model(BASE_FN_MODEL)
 model = model.to(DEVICE)
 window = torch.hann_window(LCHUNK).view(1, -1)
 
@@ -118,10 +118,7 @@ for x, info in loader:
     itrafos.append([isource, itarget])
 
 # Prepare model
-try:
-    model.precalc_matrices('on')
-except:
-    pass
+model.precalc_matrices('on')
 model.eval()
 
 print('Synth...')
