@@ -15,7 +15,7 @@ from model import Model
 
 def load_model(basename):
     basename = 'weights/' + basename
-    state = torch.load(basename + '.model.pt', map_location='cpu')
+    state = torch.load(basename + '.pt', map_location='cpu')
     model = Model(**state['model_params'])
     model.load_state_dict(state['state_dict'], strict=True)
     return model
@@ -76,14 +76,14 @@ LCHUNK = 4096
 STRIDE = LCHUNK // 2
 PATH_OUT = 'synth'
 
-BASE_FN_MODEL = 'blow'
+BASE_FN_MODEL = 'voxceleb5'
 init_seed(SEED)
 
 #################################################################################################################
 
 
 print('Load', SPLIT, 'audio...')
-dataset = DatasetVC(PATH_DATA, LCHUNK, STRIDE, sampling_rate=SR, split=SPLIT, trim=TRIM, seed=SEED)
+dataset = DatasetVC(PATH_DATA, LCHUNK, STRIDE, sampling_rate=SR, split=SPLIT, seed=SEED)
 loader = DataLoader(dataset, batch_size=SBATCH, shuffle=False, num_workers=0)
 speakers = deepcopy(dataset.speakers)
 
