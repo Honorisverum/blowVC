@@ -93,7 +93,6 @@ model = model.to(DEVICE)
 window = torch.hann_window(LCHUNK).view(1, -1)
 
 print('Transformation list...')
-np.random.seed(SEED)
 target_speaker = FORCE_TARGET_SPEAKER
 fnlist, itrafos, nfiles = [], [], 0
 
