@@ -1,25 +1,56 @@
 # blowVC
 
+## Overall
+
+Model based on [article](https://arxiv.org/abs/1912.02164).
+This project aims to convert voice to the voice of Bill Gates.
+
+Installing requirement:
+
 ```bash
-gsutil -m cp -r gs://efficient-vot/voicedata5/voxceleb_pt/* data > /dev/null 2>&1
+pip install -r requirements.txt
 ```
 
-[article](https://arxiv.org/abs/1912.02164)
+Log to your wandb account before training:
 
-
-# overall and requirements
-
+```bash
 wandb login
-pip install -r requirements.txt
+```
 
-# Data
+## Data
 
-pass
+Data was gathered from voxceleb v1 dataset.
+For simplicity, I took a few samples of the voices of famous personalities of a nationality and gender similar to Bill Gates.
+Only 7 people (in addition to Bill Gates) for 15 minutes each, the article above says that there is no point in taking more.
+The most homogeneous samples of the voices were selected, because the data from different years and of different quality were used in the dataset.
+All samples were equalized by sound volume, background noises were removed, as well as resampled up to 16kHz using the `librosa` library.
+Also, for quick loading, I pre-processed (+normalization) all the samples in the torch tensors.
+You can download this ready-to-train data using this command (`gsutil` required, bucket is open).
+
+```bash
+gsutil -m cp -r gs://efficient-vot/voxceleb/pt/* data > /dev/null 2>&1
+```
+
+You can also find the source `wav` file along the path `gs://efficient-vot/voxceleb/wav/*`
 
 # Train
 
-pass
+To train, run:
 
-# synth
+```bash
+python -m train --model_fname=my_model_name
+```
 
-pass
+All hyperparameters are configured more or less optimally.
+It takes a little over a day on 4 V100 gpus.
+
+# Synthesize
+
+To synthesize samples to Bill Gates voice (non-seen on training) with a best model, run:
+
+```bash
+python -m synth --model_fname=my_model_name
+```
+
+And then check `synth` folder.
+You can also use this [colab notebook](https://colab.research.google.com/drive/1YUs6PxCIyf_47Vx04fQWwRiNW7tYEVY5?usp=sharing) for quick reproduction.
