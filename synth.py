@@ -148,7 +148,6 @@ with torch.no_grad():
                 fn = os.path.join(PATH_OUT, fn + '.wav')
 
                 # Synthesize
-                # print(str(nfiles+1)+'/'+str(len(fnlist))+'\t'+fn)
                 sys.stdout.flush()
                 synthesize(audio, fn, STRIDE, sr=SR, normalize=True)
 
