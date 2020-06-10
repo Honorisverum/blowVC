@@ -21,7 +21,7 @@ wandb login
 
 Data was gathered from voxceleb v1 dataset.
 For simplicity, I took a few samples of the voices of famous personalities of a nationality and gender similar to Bill Gates.
-Only 7 people (in addition to Bill Gates) for 15 minutes each, the article above says that there is no point in taking more.
+There are 7 people (in addition to Bill Gates) for 15 minutes each, the article above says that there is no point in taking more.
 The most homogeneous samples of the voices were selected, because the data from different years and of different quality were used in the dataset.
 All samples were equalized by sound volume, background noises were removed, as well as resampled up to 16kHz using the `librosa` library.
 Also, for quick loading, I pre-processed (+normalization) all the samples in the torch tensors.
@@ -33,7 +33,7 @@ gsutil -m cp -r gs://efficient-vot/voxceleb/pt/* data > /dev/null 2>&1
 
 You can also find the source `wav` file along the path `gs://efficient-vot/voxceleb/wav/*`
 
-# Train
+## Train
 
 To train, run:
 
@@ -44,7 +44,7 @@ python -m train --model_fname=my_model_name
 All hyperparameters are configured more or less optimally.
 It takes a little over a day on 4 V100 gpus.
 
-# Synthesize
+## Synthesize
 
 To synthesize samples to Bill Gates voice (non-seen on training) with a best model, run:
 
