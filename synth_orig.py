@@ -119,7 +119,7 @@ print('-' * 100)
 
 # Input data
 print('Load', args.split, 'audio')
-dataset = DatasetVC('data', args.lchunk, args.stride, sampling_rate=16000, split=args.split, seed=0)
+dataset = DatasetVC('data', 4096, 4096//2, sampling_rate=16000, split=args.split, seed=0)
 loader = torch.utils.data.DataLoader(dataset, batch_size=args.sbatch, shuffle=False, num_workers=0)
 speakers = deepcopy(dataset.speakers)
 lspeakers = list(deepcopy(dataset.speakers).keys())
