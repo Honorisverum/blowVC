@@ -7,17 +7,14 @@ import numba
 from scipy.io import wavfile
 
 from datain import DataSet
-from models.blow import Model
 
 
 def load_stuff(basename, device='cpu'):
     basename = 'weights/' + basename
-    args = torch.load(basename + '.args.pt', map_location=device)
+    #args = torch.load(basename + '.args.pt', map_location=device)
     model = torch.load(basename + '.model.pt', map_location=device)
-    #state = torch.load(basename + '.model.pt', map_location=device)
-    #model = Model(sqfactor=2, nblocks=8, nflows=12, ncha=512, ntargets=5, _=123)
-    #model.load_state_dict(state.state_dict(), strict=True)
-    return args, model
+    #return args, model
+    return model
 
 
 def synthesize(frames, filename, stride, sr=16000, deemph=0, ymax=0.98, normalize=False):
@@ -106,13 +103,11 @@ if args.device == 'cuda':
 # Load model, pars, & check
 
 print('Load stuff')
-pars, model = load_stuff(args.base_fn_model)
-print('Training parameters =', pars)
-print('-' * 100)
+model = load_stuff(args.base_fn_model)
 model = model.to(args.device)
 print('-' * 100)
 
-# Check lchunk & stride
+"""# Check lchunk & stride
 if args.lchunk <= 0:
     args.lchunk = pars.lchunk
 if args.stride <= 0:
@@ -138,66 +133,25 @@ else:
     print('[WARNING: No specific overlap strategy. Forcing Hann window and normalize]')
     window = torch.hann_window(args.lchunk)
     args.synth_nonorm = False
-window = window.view(1, -1)
+window = window.view(1, -1)"""
+window = torch.hann_window(4096).view(1, -1)
 
 print('-' * 100)
 
 
-########################################################################################################################
-
-def compute_speaker_averages(speakers, trim=5 * 60):
-    print('(' * 100)
-    print('[Averages]')
-    select_speaker = None
-    if args.force_source_speaker is not None and args.force_target_speaker is not None:
-        select_speaker = args.force_source_speaker + ',' + args.force_target_speaker
-    dataset = DataSet(pars.path_data, args.lchunk, args.lchunk, sampling_rate=pars.sr, split='train+valid',
-                      trim=trim,
-                      select_speaker=select_speaker,
-                      seed=pars.seed)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=args.sbatch, shuffle=False, num_workers=0)
-    averages = {}
-    count = {}
-    with torch.no_grad():
-        for b, (x, idx) in enumerate(loader):
-            x = x.to(args.device)
-            s = idx[:, 3].to(args.device)
-            z = model.forward(x, s)[0]
-            for n in range(len(idx)):
-                i, j, last, ispk, ichap = idx[n]
-                spk, _ = dataset.filename_split(dataset.filenames[i])
-                spk = speakers[spk]
-                if spk not in averages:
-                    averages[spk] = torch.zeros_like(z[n])
-                    count[spk] = 0
-                averages[spk] += z[n]
-                count[spk] += 1
-            print('\r---> Speaker(s) average: {:5.1f}%'.format(100 * (b * args.sbatch + x.size(0)) / len(dataset)),
-                  end='')
-        print()
-    for spk in averages.keys():
-        averages[spk] = averages[spk] / count[spk]
-    print(')' * 100)
-    return averages
-
-
-########################################################################################################################
-
 # Data
 print('Load metadata')
-dataset = DataSet('data', pars.lchunk, pars.stride, sampling_rate=pars.sr, split='train+valid',
-                  seed=pars.seed, do_audio_load=False)
+dataset = DataSet('data', 4096, 4096, sampling_rate=16000, split='train+valid',
+                  seed=0, do_audio_load=False)
 speakers = deepcopy(dataset.speakers)
 lspeakers = list(speakers.keys())
-if args.zavg:
-    averages = compute_speaker_averages(speakers)
 
 # Input data
 print('Load', args.split, 'audio')
-dataset = DataSet('data', args.lchunk, args.stride, sampling_rate=pars.sr, split=args.split,
+dataset = DataSet('data', args.lchunk, args.stride, sampling_rate=16000, split=args.split,
                   trim=args.trim,
                   select_speaker=args.force_source_speaker, select_file=args.force_source_file,
-                  seed=pars.seed)
+                  seed=0)
 loader = torch.utils.data.DataLoader(dataset, batch_size=args.sbatch, shuffle=False, num_workers=0)
 
 # Get transformation list
@@ -273,10 +227,6 @@ try:
                 isource = isource.to(args.device)
                 itarget = itarget.to(args.device)
                 z = model.forward(x, isource)[0]
-                # Apply means?
-                if args.zavg:
-                    for n in range(len(x)):
-                        z[n] = z[n] + args.alpha * (averages[itarget[n].item()] - averages[isource[n].item()])
                 x = model.reverse(z, itarget)
                 x = x.cpu()
 
@@ -301,10 +251,10 @@ try:
                     # Synthesize
                     print(str(nfiles + 1) + '/' + str(len(fnlist)) + '\t' + fn)
                     sys.stdout.flush()
-                    synthesize(audio, fn, args.stride, sr=pars.sr, normalize=not args.synth_nonorm)
+                    synthesize(audio, fn, args.stride, sr=16000, normalize=not args.synth_nonorm)
 
                     # Track time
-                    t_audio += ((len(audio) - 1) * args.stride + args.lchunk) / pars.sr
+                    t_audio += ((len(audio) - 1) * args.stride + args.lchunk) / 16000
 
                     # Reset
                     audio = []
