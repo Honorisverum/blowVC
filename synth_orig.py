@@ -11,14 +11,8 @@ from datain import DataSet
 
 def load_stuff(basename, device='cpu'):
     basename = 'weights/' + basename
-    try:
-        args = torch.load(basename + '.args.pt', map_location=device)
-    except:
-        args = None
-    try:
-        model = torch.load(basename + '.model.pt', map_location=device)
-    except:
-        model = None
+    args = torch.load(basename + '.args.pt', map_location=device)
+    model = torch.load(basename + '.model.pt', map_location=device)
     return args, model
 
 
