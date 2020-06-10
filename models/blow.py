@@ -24,7 +24,7 @@ def softclamp(x, mx=1, margin=0.03, alpha=0.7, clipval=100):
 
 class Model(nn.Module):
 
-    def __init__(self, sqfactor, nblocks, nflows, ncha, ntargets, _, semb=128):
+    def __init__(self, sqfactor, nblocks, nflows, ncha, ntargets, semb=128):
         super(Model, self).__init__()
         nsq = sqfactor
         self.blocks = torch.nn.ModuleList()
