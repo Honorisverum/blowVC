@@ -178,7 +178,7 @@ with torch.no_grad():
                 fn, source_speaker, target_speaker = fnlist[nfiles]
                 _, fn = os.path.split(fn)
                 # Synthesize
-                synthesize(audio, fn=f"{args.path_out}/{fn}_to_{target_speaker}.wav")
+                synthesize(audio, filename=f"{args.path_out}/{fn}_to_{target_speaker}.wav")
                 # Reset
                 audio = []
                 nfiles += 1
