@@ -7,12 +7,16 @@ import numba
 from scipy.io import wavfile
 
 from datain import DataSet
+from models.blow import Model
 
 
 def load_stuff(basename, device='cpu'):
     basename = 'weights/' + basename
     args = torch.load(basename + '.args.pt', map_location=device)
-    model = torch.load(basename + '.model.pt', map_location=device)
+    #model = torch.load(basename + '.model.pt', map_location=device)
+    state = torch.load(basename + '.model.pt', map_location=device)
+    model = Model(sqfactor=2, nblocks=8, nflows=12, ncha=512, ntargets=5)
+    model.load_state_dict(state.state_dict())
     return args, model
 
 
