@@ -5,9 +5,19 @@ import torch.utils.data
 from copy import deepcopy
 from tqdm.auto import tqdm
 from scipy.io import wavfile
+from torch.backends import cudnn
 import warnings
 
 from datain import DataSet
+
+
+def init_seed(seed=0):
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+        torch.manual_seed(seed)
 
 
 def load_model(basename, device='cpu'):
@@ -62,10 +72,11 @@ parser.add_argument('--stride', default=-1, type=int, required=False, help='(def
 parser.add_argument('--synth_nonorm', action='store_true')
 parser.add_argument('--maxfiles', default=10000000, type=int, required=False, help='(default=%(default)d)')
 
+FORCE_TARGET_SPEAKER = 'BillGates'
+SEED = 0
+
 # Process arguments
 args = parser.parse_args()
-if args.trim <= 0:
-    args.trim = None
 if args.force_source_file == '':
     args.force_source_file = None
 if args.force_source_speaker == '':
@@ -75,13 +86,7 @@ if args.force_target_speaker == '':
 if args.fn_list == '':
     args.fn_list = 'list_seed' + str(args.seed_input) + '_' + args.split + '.tsv'
 
-# Seed
-np.random.seed(args.seed)
-torch.manual_seed(args.seed)
-if args.device == 'cuda':
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-    torch.cuda.manual_seed(args.seed)
+init_seed(SEED)
 
 ########################################################################################################################
 
@@ -92,30 +97,19 @@ model = load_model(args.base_fn_model)
 model = model.to(args.device)
 window = torch.hann_window(4096).view(1, -1)
 
-# Data
-print('Load metadata')
-dataset = DataSet('data', 4096, 4096, sampling_rate=16000, split='train+valid',
-                  seed=0, do_audio_load=False)
-speakers = deepcopy(dataset.speakers)
-lspeakers = list(speakers.keys())
-
 # Input data
 print('Load', args.split, 'audio')
 dataset = DataSet('data', 4096, 4096 // 2, sampling_rate=16000, split=args.split,
-                  trim=args.trim,
-                  select_speaker=args.force_source_speaker, select_file=args.force_source_file,
-                  seed=0)
+                  trim=None, seed=0)
 loader = torch.utils.data.DataLoader(dataset, batch_size=args.sbatch, shuffle=False, num_workers=0)
+speakers = deepcopy(dataset.speakers)
 
 # Get transformation list
-print('Transformation list')
-np.random.seed(args.seed)
-target_speaker = lspeakers[np.random.randint(len(lspeakers))]
-if args.force_target_speaker is not None: target_speaker = args.force_target_speaker
-fnlist = []
-itrafos = []
-nfiles = 0
+target_speaker = FORCE_TARGET_SPEAKER
+fnlist, itrafos, nfiles = [], [], 0
+
 for x, info in loader:
+
     isource, itarget = [], []
     for n in range(len(x)):
 
@@ -124,29 +118,15 @@ for x, info in loader:
         source_speaker, _ = dataset.filename_split(dataset.filenames[i])
         isource.append(speakers[source_speaker])
         itarget.append(speakers[target_speaker])
-        if last == 1 and nfiles < args.maxfiles:
 
+        if last == 1:
             # Get filename
             fn = dataset.filenames[i][:-len('.pt')]
             fnlist.append([fn, source_speaker, target_speaker])
-
-            # Restart
-            target_speaker = lspeakers[np.random.randint(len(lspeakers))]
-            if args.force_target_speaker is not None: target_speaker = args.force_target_speaker
             nfiles += 1
 
     isource, itarget = torch.LongTensor(isource), torch.LongTensor(itarget)
     itrafos.append([isource, itarget])
-    if nfiles >= args.maxfiles:
-        break
-
-# Write transformation list
-flist = open(os.path.join(args.path_out, args.fn_list), 'w')
-for fields in fnlist:
-    flist.write('\t'.join(fields) + '\n')
-flist.close()
-
-########################################################################################################################
 
 # Prepare model
 model.precalc_matrices('on')
