@@ -20,10 +20,13 @@ wandb login
 ## Data
 
 Data was gathered from voxceleb v1 dataset.
+Sampled for Bill Gates was gathered from `6Af6b_wyiwI`, `ofQMbC2e_as`, `JaF-fq2Zn7I` and `4X-KkQeMMSQ` Youtube videos. (see this [notebook](https://colab.research.google.com/drive/1MirTXE5puBM6zblXuhQf13d0Am-rsF6u?usp=sharing))
+
 For simplicity, I took a few samples of the voices of famous personalities of a nationality and gender similar to Bill Gates.
 There are 7 people (in addition to Bill Gates) for 15 minutes each, the article above says that there is no point in taking more.
 The most homogeneous samples of the voices were selected, because the data from different years and of different quality were used in the dataset.
 All samples were equalized by sound volume, background noises were removed, as well as resampled up to 16kHz using the `librosa` library.
+
 Also, for quick loading, I pre-processed (+normalization) all the samples in the torch tensors.
 You can download this ready-to-train data using this command (`gsutil` required, bucket is open).
 
