@@ -1,4 +1,4 @@
-# blowVC
+# blowVC Bill Gates
 
 ## Overall
 
