@@ -1,9 +1,8 @@
-import sys, argparse, os
+import argparse, os
 import numpy as np
 import torch
 import torch.utils.data
 from copy import deepcopy
-import numba
 from tqdm.auto import tqdm
 from scipy.io import wavfile
 import warnings
@@ -11,7 +10,7 @@ import warnings
 from datain import DataSet
 
 
-def load_stuff(basename, device='cpu'):
+def load_model(basename, device='cpu'):
     basename = 'weights/' + basename
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
@@ -19,40 +18,24 @@ def load_stuff(basename, device='cpu'):
     return model
 
 
-def synthesize(frames, filename, stride, sr=16000, deemph=0, ymax=0.98, normalize=False):
+def synthesize(frames, filename, stride=2048, sr=16000, ymax=0.98):
     # Generate stream
     y = torch.zeros((len(frames) - 1) * stride + len(frames[0]))
     for i, x in enumerate(frames):
         y[i * stride:i * stride + len(x)] += x
     # To numpy & deemph
     y = y.numpy().astype(np.float32)
-    if deemph > 0:
-        y = deemphasis(y, alpha=deemph)
     # Normalize
-    if normalize:
-        y -= np.mean(y)
-        mx = np.max(np.abs(y))
-        if mx > 0:
-            y *= ymax / mx
+    y -= np.mean(y)
+    mx = np.max(np.abs(y))
+    if mx > 0:
+        y *= ymax / mx
     else:
         y = np.clip(y, -ymax, ymax)
     # To 16 bit & save
     wavfile.write(filename, sr, np.array(y * 32767, dtype=np.int16))
     return y
 
-
-@numba.jit(nopython=True, cache=True)
-def deemphasis(x, alpha=0.2):
-    assert 0 <= alpha <= 1
-    if alpha == 0 or alpha == 1:
-        return x
-    y = x.copy()
-    for n in range(1, len(x)):
-        y[n] = x[n] + alpha * y[n - 1]
-    return y
-
-
-########################################################################################################################
 
 # Arguments
 parser = argparse.ArgumentParser(description='Audio synthesis script')
@@ -105,41 +88,9 @@ if args.device == 'cuda':
 # Load model, pars, & check
 
 print('Load stuff')
-model = load_stuff(args.base_fn_model)
+model = load_model(args.base_fn_model)
 model = model.to(args.device)
-print('-' * 100)
-
-"""# Check lchunk & stride
-if args.lchunk <= 0:
-    args.lchunk = pars.lchunk
-if args.stride <= 0:
-    args.stride = args.lchunk // 2
-if pars.model != 'blow' and not pars.model.startswith('test'):
-    if not args.zavg:
-        print('[WARNING: You are not using Blow. Are you sure you do not want to use --zavg?]')
-    if args.lchunk != pars.lchunk:
-        args.lchunk = pars.lchunk
-        print(
-            '[WARNING: ' + pars.model + ' model can only operate with same frame size as training. It has been changed, but you may want to change the stride now]')
-if args.stride == args.lchunk:
-    print('[Synth with 0% overlap]')
-    window = torch.ones(args.lchunk)
-elif args.stride == args.lchunk // 2:
-    print('[Synth with 50% overlap]')
-    window = torch.hann_window(args.lchunk)
-elif args.stride == args.lchunk // 4 * 3:
-    print('[Synth with 25% overlap]')
-    window = torch.hann_window(args.lchunk // 2)
-    window = torch.cat([window[:len(window) // 2], torch.ones(args.lchunk // 2), window[len(window) // 2:]])
-else:
-    print('[WARNING: No specific overlap strategy. Forcing Hann window and normalize]')
-    window = torch.hann_window(args.lchunk)
-    args.synth_nonorm = False
-window = window.view(1, -1)"""
 window = torch.hann_window(4096).view(1, -1)
-
-print('-' * 100)
-
 
 # Data
 print('Load metadata')
@@ -150,7 +101,7 @@ lspeakers = list(speakers.keys())
 
 # Input data
 print('Load', args.split, 'audio')
-dataset = DataSet('data', 4096, 4096//2, sampling_rate=16000, split=args.split,
+dataset = DataSet('data', 4096, 4096 // 2, sampling_rate=16000, split=args.split,
                   trim=args.trim,
                   select_speaker=args.force_source_speaker, select_file=args.force_source_file,
                   seed=0)
@@ -226,13 +177,8 @@ with torch.no_grad():
             if last == 1:
                 fn, source_speaker, target_speaker = fnlist[nfiles]
                 _, fn = os.path.split(fn)
-                fn += '_to_' + target_speaker
-                fn = os.path.join(args.path_out, fn + '.wav')
-
                 # Synthesize
-                sys.stdout.flush()
-                synthesize(audio, fn, 4096//2, sr=16000, normalize=True)
-
+                synthesize(audio, fn=f"{args.path_out}/{fn}_to_{target_speaker}.wav")
                 # Reset
                 audio = []
                 nfiles += 1
