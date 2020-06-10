@@ -5,6 +5,7 @@ import torch.utils.data
 from copy import deepcopy
 import numba
 from scipy.io import wavfile
+import warnings
 
 from datain import DataSet
 
@@ -12,7 +13,9 @@ from datain import DataSet
 def load_stuff(basename, device='cpu'):
     basename = 'weights/' + basename
     #args = torch.load(basename + '.args.pt', map_location=device)
-    model = torch.load(basename + '.model.pt', map_location=device)
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        model = torch.load(basename + '.model.pt', map_location=device)
     #return args, model
     return model
 
@@ -251,7 +254,7 @@ try:
                     # Synthesize
                     print(str(nfiles + 1) + '/' + str(len(fnlist)) + '\t' + fn)
                     sys.stdout.flush()
-                    synthesize(audio, fn, args.stride, sr=16000, normalize=not args.synth_nonorm)
+                    synthesize(audio, fn, 4096//2, sr=16000, normalize=not args.synth_nonorm)
 
                     # Track time
                     t_audio += ((len(audio) - 1) * args.stride + args.lchunk) / 16000
