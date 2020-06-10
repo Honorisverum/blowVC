@@ -222,7 +222,7 @@ try:
                     # Synthesize
                     print(str(nfiles + 1) + '/' + str(len(fnlist)) + '\t' + fn)
                     sys.stdout.flush()
-                    synthesize(audio, fn, args.stride, sr=16000, normalize=not args.synth_nonorm)
+                    synthesize(audio, fn, 4096//2, sr=16000, normalize=not args.synth_nonorm)
 
                     # Track time
                     t_audio += ((len(audio) - 1) * args.stride + args.lchunk) / 16000
