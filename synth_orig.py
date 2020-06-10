@@ -15,7 +15,7 @@ def load_stuff(basename, device='cpu'):
     args = torch.load(basename + '.args.pt', map_location=device)
     #model = torch.load(basename + '.model.pt', map_location=device)
     state = torch.load(basename + '.model.pt', map_location=device)
-    model = Model(sqfactor=2, nblocks=8, nflows=12, ncha=512, ntargets=5)
+    model = Model(sqfactor=2, nblocks=8, nflows=12, ncha=512, ntargets=5, _=_)
     model.load_state_dict(state.state_dict())
     return args, model
 
