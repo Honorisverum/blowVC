@@ -2,7 +2,7 @@
 
 ## Overall
 
-Model based on [article](https://arxiv.org/abs/1912.02164).
+Model based on [article](https://arxiv.org/abs/1906.00794).
 This project aims to convert voice to the voice of Bill Gates.
 
 Installing requirement:
