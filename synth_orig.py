@@ -148,7 +148,7 @@ lspeakers = list(speakers.keys())
 
 # Input data
 print('Load', args.split, 'audio')
-dataset = DataSet('data', args.lchunk, args.stride, sampling_rate=16000, split=args.split,
+dataset = DataSet('data', 4096, 4096//2, sampling_rate=16000, split=args.split,
                   trim=args.trim,
                   select_speaker=args.force_source_speaker, select_file=args.force_source_file,
                   seed=0)
