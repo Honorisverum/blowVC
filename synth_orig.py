@@ -1,9 +1,10 @@
-import sys, argparse, os, time
+import sys, argparse, os
 import numpy as np
 import torch
 import torch.utils.data
 from copy import deepcopy
 import numba
+from tqdm.auto import tqdm
 from scipy.io import wavfile
 import warnings
 
@@ -12,11 +13,9 @@ from datain import DataSet
 
 def load_stuff(basename, device='cpu'):
     basename = 'weights/' + basename
-    #args = torch.load(basename + '.args.pt', map_location=device)
     with warnings.catch_warnings():
         warnings.simplefilter('ignore')
         model = torch.load(basename + '.model.pt', map_location=device)
-    #return args, model
     return model
 
 
@@ -199,90 +198,41 @@ flist.close()
 ########################################################################################################################
 
 # Prepare model
-try:
-    model.precalc_matrices('on')
-except:
-    pass
+model.precalc_matrices('on')
 model.eval()
-print('-' * 100)
 
 # Synthesis loop
-print('Synth')
-audio = []
-nfiles = 0
-t_conv = 0
-t_synth = 0
-t_audio = 0
-try:
-    with torch.no_grad():
-        for k, (x, info) in enumerate(loader):
-            if k >= len(itrafos):
-                break
-            isource, itarget = itrafos[k]
+print('Synth...')
+audio, nfiles, t_conv, t_synth, t_audio = [], 0, 0, 0, 0
+with torch.no_grad():
+    pbar = tqdm(enumerate(loader), total=len(loader), leave=False)
+    for k, (x, info) in pbar:
+        if k >= len(itrafos): break
+        isource, itarget = itrafos[k]
 
-            # Track time
-            tstart = time.time()
+        # Forward & reverse
+        x = x.to(args.device)
+        isource = isource.to(args.device)
+        itarget = itarget.to(args.device)
+        z = model.forward(x, isource)[0]
+        x = model.reverse(z, itarget)
+        x = x.cpu()
+        x *= window
 
-            # Convert
-            if args.convert:
-                # Forward & reverse
-                x = x.to(args.device)
-                isource = isource.to(args.device)
-                itarget = itarget.to(args.device)
-                z = model.forward(x, isource)[0]
-                x = model.reverse(z, itarget)
-                x = x.cpu()
+        for n in range(len(x)):
+            audio.append(x[n])
+            i, j, last, ispk, iut = info[n]
 
-            # Track time
-            t_conv += time.time() - tstart
-            tstart = time.time()
+            if last == 1:
+                fn, source_speaker, target_speaker = fnlist[nfiles]
+                _, fn = os.path.split(fn)
+                fn += '_to_' + target_speaker
+                fn = os.path.join(args.path_out, fn + '.wav')
 
-            # Append audio
-            x *= window
-            for n in range(len(x)):
-                audio.append(x[n])
-                i, j, last, ispk, iut = info[n]
-                if last == 1:
+                # Synthesize
+                sys.stdout.flush()
+                synthesize(audio, fn, 4096//2, sr=16000, normalize=True)
 
-                    # Filename
-                    fn, source_speaker, target_speaker = fnlist[nfiles]
-                    _, fn = os.path.split(fn)
-                    if args.convert:
-                        fn += '_to_' + target_speaker
-                    fn = os.path.join(args.path_out, fn + '.wav')
-
-                    # Synthesize
-                    print(str(nfiles + 1) + '/' + str(len(fnlist)) + '\t' + fn)
-                    sys.stdout.flush()
-                    synthesize(audio, fn, 4096//2, sr=16000, normalize=not args.synth_nonorm)
-
-                    # Track time
-                    t_audio += ((len(audio) - 1) * args.stride + args.lchunk) / 16000
-
-                    # Reset
-                    audio = []
-                    nfiles += 1
-                    if nfiles >= args.maxfiles:
-                        break
-
-            # Track time
-            t_synth += time.time() - tstart
-except KeyboardInterrupt:
-    print()
-
-########################################################################################################################
-
-# Report times
-print('-' * 100)
-print('Time')
-print('   Conversion:\t{:6.1f} ms/s'.format(1000 * t_conv / t_audio))
-print('   Synthesis:\t{:6.1f} ms/s'.format(1000 * t_synth / t_audio))
-print('   TOTAL:\t{:6.1f} ms/s\t(x{:.1f})'.format(1000 * (t_conv + t_synth) / t_audio,
-                                                  1 / ((t_conv + t_synth) / t_audio)))
-print('-' * 100)
-
-# Done
-if args.convert:
-    print('*** Conversions done ***')
-else:
-    print('*** Original audio. No conversions done ***')
+                # Reset
+                audio = []
+                nfiles += 1
