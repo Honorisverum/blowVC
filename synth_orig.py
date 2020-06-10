@@ -3,13 +3,47 @@ import numpy as np
 import torch
 import torch.utils.data
 from copy import deepcopy
-
-from utils import datain
-from utils import utils
-from utils import audio as audioutils
-
+import numba
+from scipy.io import wavfile
 
 from model import Model
+from data import DatasetVC
+
+
+def synthesize(frames, filename, stride, sr=16000, deemph=0, ymax=0.98, normalize=False):
+    # Generate stream
+    y = torch.zeros((len(frames) - 1) * stride + len(frames[0]))
+    for i, x in enumerate(frames):
+        y[i * stride:i * stride + len(x)] += x
+    # To numpy & deemph
+    y = y.numpy().astype(np.float32)
+    if deemph > 0:
+        y = deemphasis(y, alpha=deemph)
+    # Normalize
+    if normalize:
+        y -= np.mean(y)
+        mx = np.max(np.abs(y))
+        if mx > 0:
+            y *= ymax / mx
+    else:
+        y = np.clip(y, -ymax, ymax)
+    # To 16 bit & save
+    wavfile.write(filename, sr, np.array(y * 32767, dtype=np.int16))
+    return y
+
+
+########################################################################################################################
+
+@numba.jit(nopython=True, cache=True)
+def deemphasis(x, alpha=0.2):
+    # http://www.fon.hum.uva.nl/praat/manual/Sound__Filter__de-emphasis____.html
+    assert 0 <= alpha <= 1
+    if alpha == 0 or alpha == 1:
+        return x
+    y = x.copy()
+    for n in range(1, len(x)):
+        y[n] = x[n] + alpha * y[n - 1]
+    return y
 
 
 def load_model(basename):
@@ -60,9 +94,6 @@ if args.force_target_speaker == '':
 if args.fn_list == '':
     args.fn_list = 'list_seed' + str(args.seed_input) + '_' + args.split + '.tsv'
 
-# Print arguments
-utils.print_arguments(args)
-
 # Seed
 np.random.seed(args.seed)
 torch.manual_seed(args.seed)
@@ -79,21 +110,16 @@ print('Load stuff')
 model = load_model(args.base_fn_model)
 model = model.to(args.device)
 
-
 print('[Synth with 50% overlap]')
 window = torch.hann_window(args.lchunk)
 window = window.view(1, -1)
 print('-' * 100)
 
-
 ########################################################################################################################
 
 # Input data
 print('Load', args.split, 'audio')
-dataset = datain.DataSet('data', args.lchunk, args.stride, sampling_rate=16000, split=args.split,
-                         trim=args.trim,
-                         select_speaker=args.force_source_speaker, select_file=args.force_source_file,
-                         seed=0)
+dataset = DatasetVC('data', args.lchunk, args.stride, sampling_rate=16000, split=args.split, seed=0)
 loader = torch.utils.data.DataLoader(dataset, batch_size=args.sbatch, shuffle=False, num_workers=0)
 speakers = deepcopy(dataset.speakers)
 lspeakers = list(deepcopy(dataset.speakers).keys())
@@ -118,7 +144,7 @@ for x, info in loader:
         if last == 1 and nfiles < args.maxfiles:
 
             # Get filename
-            fn = dataset.filenames[i][:-len(datain.EXTENSION)]
+            fn = dataset.filenames[i][:-len('.pt')]
             fnlist.append([fn, source_speaker, target_speaker])
 
             # Restart
@@ -196,7 +222,7 @@ try:
                     # Synthesize
                     print(str(nfiles + 1) + '/' + str(len(fnlist)) + '\t' + fn)
                     sys.stdout.flush()
-                    audioutils.synthesize(audio, fn, args.stride, sr=16000, normalize=not args.synth_nonorm)
+                    synthesize(audio, fn, args.stride, sr=16000, normalize=not args.synth_nonorm)
 
                     # Track time
                     t_audio += ((len(audio) - 1) * args.stride + args.lchunk) / 16000
