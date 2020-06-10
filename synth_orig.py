@@ -181,7 +181,7 @@ def compute_speaker_averages(speakers, trim=5 * 60):
 
 # Data
 print('Load metadata')
-dataset = DataSet(pars.path_data, pars.lchunk, pars.stride, sampling_rate=pars.sr, split='train+valid',
+dataset = DataSet('data', pars.lchunk, pars.stride, sampling_rate=pars.sr, split='train+valid',
                   seed=pars.seed, do_audio_load=False)
 speakers = deepcopy(dataset.speakers)
 lspeakers = list(speakers.keys())
@@ -190,7 +190,7 @@ if args.zavg:
 
 # Input data
 print('Load', args.split, 'audio')
-dataset = DataSet(pars.path_data, args.lchunk, args.stride, sampling_rate=pars.sr, split=args.split,
+dataset = DataSet('data', args.lchunk, args.stride, sampling_rate=pars.sr, split=args.split,
                   trim=args.trim,
                   select_speaker=args.force_source_speaker, select_file=args.force_source_file,
                   seed=pars.seed)
