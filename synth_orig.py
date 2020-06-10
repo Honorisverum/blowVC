@@ -111,7 +111,7 @@ model = load_model(args.base_fn_model)
 model = model.to(args.device)
 
 print('[Synth with 50% overlap]')
-window = torch.hann_window(args.lchunk)
+window = torch.hann_window(4096)
 window = window.view(1, -1)
 print('-' * 100)
 
