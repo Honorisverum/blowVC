@@ -6,8 +6,20 @@ from copy import deepcopy
 import numba
 from scipy.io import wavfile
 
-from model import Model
 from datain import DataSet
+
+
+def load_stuff(basename, device='cpu'):
+    basename = 'weights/' + basename
+    try:
+        args = torch.load(basename + '.args.pt', map_location=device)
+    except:
+        args = None
+    try:
+        model = torch.load(basename + '.model.pt', map_location=device)
+    except:
+        model = None
+    return args, model
 
 
 def synthesize(frames, filename, stride, sr=16000, deemph=0, ymax=0.98, normalize=False):
@@ -32,11 +44,8 @@ def synthesize(frames, filename, stride, sr=16000, deemph=0, ymax=0.98, normaliz
     return y
 
 
-########################################################################################################################
-
 @numba.jit(nopython=True, cache=True)
 def deemphasis(x, alpha=0.2):
-    # http://www.fon.hum.uva.nl/praat/manual/Sound__Filter__de-emphasis____.html
     assert 0 <= alpha <= 1
     if alpha == 0 or alpha == 1:
         return x
@@ -44,14 +53,6 @@ def deemphasis(x, alpha=0.2):
     for n in range(1, len(x)):
         y[n] = x[n] + alpha * y[n - 1]
     return y
-
-
-def load_model(basename):
-    basename = 'weights/' + basename
-    state = torch.load(basename + '.pt', map_location='cpu')
-    model = Model(**state['model_params'])
-    model.load_state_dict(state['state_dict'], strict=True)
-    return model
 
 
 ########################################################################################################################
@@ -107,27 +108,104 @@ if args.device == 'cuda':
 # Load model, pars, & check
 
 print('Load stuff')
-model = load_model(args.base_fn_model)
-model = model.to(args.device)
-
-print('[Synth with 50% overlap]')
-window = torch.hann_window(4096)
-window = window.view(1, -1)
+pars, model = load_stuff(args.base_fn_model)
+print('Training parameters =', pars)
 print('-' * 100)
+model = model.to(args.device)
+print('-' * 100)
+
+# Check lchunk & stride
+if args.lchunk <= 0:
+    args.lchunk = pars.lchunk
+if args.stride <= 0:
+    args.stride = args.lchunk // 2
+if pars.model != 'blow' and not pars.model.startswith('test'):
+    if not args.zavg:
+        print('[WARNING: You are not using Blow. Are you sure you do not want to use --zavg?]')
+    if args.lchunk != pars.lchunk:
+        args.lchunk = pars.lchunk
+        print(
+            '[WARNING: ' + pars.model + ' model can only operate with same frame size as training. It has been changed, but you may want to change the stride now]')
+if args.stride == args.lchunk:
+    print('[Synth with 0% overlap]')
+    window = torch.ones(args.lchunk)
+elif args.stride == args.lchunk // 2:
+    print('[Synth with 50% overlap]')
+    window = torch.hann_window(args.lchunk)
+elif args.stride == args.lchunk // 4 * 3:
+    print('[Synth with 25% overlap]')
+    window = torch.hann_window(args.lchunk // 2)
+    window = torch.cat([window[:len(window) // 2], torch.ones(args.lchunk // 2), window[len(window) // 2:]])
+else:
+    print('[WARNING: No specific overlap strategy. Forcing Hann window and normalize]')
+    window = torch.hann_window(args.lchunk)
+    args.synth_nonorm = False
+window = window.view(1, -1)
+
+print('-' * 100)
+
 
 ########################################################################################################################
 
+def compute_speaker_averages(speakers, trim=5 * 60):
+    print('(' * 100)
+    print('[Averages]')
+    select_speaker = None
+    if args.force_source_speaker is not None and args.force_target_speaker is not None:
+        select_speaker = args.force_source_speaker + ',' + args.force_target_speaker
+    dataset = DataSet(pars.path_data, args.lchunk, args.lchunk, sampling_rate=pars.sr, split='train+valid',
+                      trim=trim,
+                      select_speaker=select_speaker,
+                      seed=pars.seed)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=args.sbatch, shuffle=False, num_workers=0)
+    averages = {}
+    count = {}
+    with torch.no_grad():
+        for b, (x, idx) in enumerate(loader):
+            x = x.to(args.device)
+            s = idx[:, 3].to(args.device)
+            z = model.forward(x, s)[0]
+            for n in range(len(idx)):
+                i, j, last, ispk, ichap = idx[n]
+                spk, _ = dataset.filename_split(dataset.filenames[i])
+                spk = speakers[spk]
+                if spk not in averages:
+                    averages[spk] = torch.zeros_like(z[n])
+                    count[spk] = 0
+                averages[spk] += z[n]
+                count[spk] += 1
+            print('\r---> Speaker(s) average: {:5.1f}%'.format(100 * (b * args.sbatch + x.size(0)) / len(dataset)),
+                  end='')
+        print()
+    for spk in averages.keys():
+        averages[spk] = averages[spk] / count[spk]
+    print(')' * 100)
+    return averages
+
+
+########################################################################################################################
+
+# Data
+print('Load metadata')
+dataset = DataSet(pars.path_data, pars.lchunk, pars.stride, sampling_rate=pars.sr, split='train+valid',
+                  seed=pars.seed, do_audio_load=False)
+speakers = deepcopy(dataset.speakers)
+lspeakers = list(speakers.keys())
+if args.zavg:
+    averages = compute_speaker_averages(speakers)
+
 # Input data
 print('Load', args.split, 'audio')
-dataset = DataSet('data', 4096, 4096//2, sampling_rate=16000, split=args.split, seed=0)
+dataset = DataSet(pars.path_data, args.lchunk, args.stride, sampling_rate=pars.sr, split=args.split,
+                  trim=args.trim,
+                  select_speaker=args.force_source_speaker, select_file=args.force_source_file,
+                  seed=pars.seed)
 loader = torch.utils.data.DataLoader(dataset, batch_size=args.sbatch, shuffle=False, num_workers=0)
-speakers = deepcopy(dataset.speakers)
-lspeakers = list(deepcopy(dataset.speakers).keys())
 
 # Get transformation list
 print('Transformation list')
 np.random.seed(args.seed)
-target_speaker = None
+target_speaker = lspeakers[np.random.randint(len(lspeakers))]
 if args.force_target_speaker is not None: target_speaker = args.force_target_speaker
 fnlist = []
 itrafos = []
@@ -198,6 +276,9 @@ try:
                 itarget = itarget.to(args.device)
                 z = model.forward(x, isource)[0]
                 # Apply means?
+                if args.zavg:
+                    for n in range(len(x)):
+                        z[n] = z[n] + args.alpha * (averages[itarget[n].item()] - averages[isource[n].item()])
                 x = model.reverse(z, itarget)
                 x = x.cpu()
 
@@ -222,10 +303,10 @@ try:
                     # Synthesize
                     print(str(nfiles + 1) + '/' + str(len(fnlist)) + '\t' + fn)
                     sys.stdout.flush()
-                    synthesize(audio, fn, 4096//2, sr=16000, normalize=not args.synth_nonorm)
+                    synthesize(audio, fn, args.stride, sr=pars.sr, normalize=not args.synth_nonorm)
 
                     # Track time
-                    t_audio += ((len(audio) - 1) * args.stride + args.lchunk) / 16000
+                    t_audio += ((len(audio) - 1) * args.stride + args.lchunk) / pars.sr
 
                     # Reset
                     audio = []
