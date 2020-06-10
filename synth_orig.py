@@ -7,7 +7,7 @@ import numba
 from scipy.io import wavfile
 
 from model import Model
-from data import DatasetVC
+from datain import DataSet
 
 
 def synthesize(frames, filename, stride, sr=16000, deemph=0, ymax=0.98, normalize=False):
@@ -119,7 +119,7 @@ print('-' * 100)
 
 # Input data
 print('Load', args.split, 'audio')
-dataset = DatasetVC('data', 4096, 4096//2, sampling_rate=16000, split=args.split, seed=0)
+dataset = DataSet('data', 4096, 4096//2, sampling_rate=16000, split=args.split, seed=0)
 loader = torch.utils.data.DataLoader(dataset, batch_size=args.sbatch, shuffle=False, num_workers=0)
 speakers = deepcopy(dataset.speakers)
 lspeakers = list(deepcopy(dataset.speakers).keys())
