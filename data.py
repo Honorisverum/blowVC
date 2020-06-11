@@ -113,8 +113,8 @@ class DatasetVC(Dataset):
         # Get info
         y = torch.LongTensor([i, j, last, ispk, ichap])
         if self.is_aug:
-            x = self.augmentations.emphasis(x, 0.2)
-            x = self.augmentations.magnorm_flip(x, 1)
+            x = self.augmentations.emphasis(x.unsqueeze(0), 0.2)[0]
+            x = self.augmentations.magnorm_flip(x.unsqueeze(0), 1)[0]
         return x, y
 
 
