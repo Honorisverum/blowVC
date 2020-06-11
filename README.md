@@ -41,19 +41,26 @@ You can also find the source `wav` file along the path `gs://efficient-vot/voxce
 To train, run:
 
 ```bash
-python -m train --model_fname=my_model_name
+python -m train --model_fname=blowmodel
 ```
 
 All hyperparameters are configured more or less optimally.
 It takes a little over a day on 4 V100 gpus.
+
+## Pre-trained model
+
+```bash
+gsutil cp gs://efficient-vot/blowmodel.pt weights > /dev/null 2>&1
+```
 
 ## Synthesize
 
 To synthesize samples to Bill Gates voice (non-seen on training) with a best model, run:
 
 ```bash
-python -m synth --model_fname=my_model_name
+python -m synth --model_fname=blowmodel
 ```
 
 And then check `synth` folder.
 You can also use this [colab notebook](https://colab.research.google.com/drive/1YUs6PxCIyf_47Vx04fQWwRiNW7tYEVY5?usp=sharing) for quick reproduction.
+
