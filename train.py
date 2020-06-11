@@ -152,7 +152,7 @@ def run_train(args):
     print('Train...')
     wandb.init(config=args)
     for epoch in range(N_EPOCHS):
-        print(f"Starting {epoch} epoch...")
+        print(f"Starting {epoch + 1} epoch...")
         _, model, optim, scheduler = loop(model, 'train', loader_train, optim, scheduler, device)
         with torch.no_grad():
             loss, model, optim, scheduler = loop(model, 'valid', loader_valid, optim, scheduler, device)
